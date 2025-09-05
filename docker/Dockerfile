@@ -19,4 +19,5 @@ RUN chmod +x /usr/bin/nfsd.sh
 
 EXPOSE 2049/tcp 111/tcp 111/udp 20048/tcp
 
+USER non-root
 ENTRYPOINT ["/usr/bin/nfsd.sh"]
