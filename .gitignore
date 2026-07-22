@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.orig
+
+# Helm build output
+/dist/
+/helm/charts/
+/*.tgz
+/helm/*.tgz
+
+# Docker and local build output
+/build/
+/out/
+.docker/
