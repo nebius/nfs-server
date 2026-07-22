@@ -25,6 +25,7 @@
 /helm/charts/
 /*.tgz
 /helm/*.tgz
+/helm/tests/__snapshot__
 
 # Docker and local build output
 /build/
