@@ -1,0 +1,65 @@
+#!/usr/bin/env just --justfile
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# region Variables
+
+HELM_VERSION := env_var_or_default("HELM_VERSION", "v4.3.0")
+
+HELM_UNITTEST_REPO := env_var_or_default("HELM_UNITTEST_REPO", "oci://ghcr.io/helm-unittest/helm-unittest")
+HELM_UNITTEST_NAME := env_var_or_default("HELM_UNITTEST_NAME", "unittest")
+HELM_UNITTEST_VERSION := env_var_or_default("HELM_UNITTEST_VERSION", "1.1.1")
+
+# endregion Variables
+
+# region Tools
+
+[doc('Ensure Helm is installed')]
+[private]
+@tool-helm:
+	need_install=0; \
+	if ! command -v helm >/dev/null 2>&1; then \
+		echo 'Helm is missing'; \
+		need_install=1; \
+	fi; \
+	if [ "$need_install" = "1" ]; then \
+		echo 'Installing Helm'; \
+		curl -fsSL 'https://raw.githubusercontent.com/helm/helm/refs/tags/{{ HELM_VERSION }}/scripts/get-helm-4' | bash; \
+	fi
+
+[doc('Ensure the helm-unittest plugin is installed')]
+[private]
+@tool-helmtest: tool-helm
+	installed_version="$(helm plugin list | awk -v name='{{ HELM_UNITTEST_NAME }}' 'NR > 1 && $1 == name { print $2; exit }')"; \
+	need_install=0; \
+	if [ -z "$installed_version" ]; then \
+		echo 'Helm plugin {{ HELM_UNITTEST_NAME }} is missing'; \
+		need_install=1; \
+	elif [ "$installed_version" != "{{ HELM_UNITTEST_VERSION }}" ]; then \
+		echo "Helm plugin {{ HELM_UNITTEST_NAME }} version mismatch: found ${installed_version}, expected {{ HELM_UNITTEST_VERSION }}"; \
+		echo "Removing Helm plugin {{ HELM_UNITTEST_NAME }} ${installed_version}"; \
+		helm plugin uninstall {{ HELM_UNITTEST_NAME }}; \
+		need_install=1; \
+	fi; \
+	if [ "$need_install" = "1" ]; then \
+		echo 'Installing Helm plugin {{ HELM_UNITTEST_NAME }} {{ HELM_UNITTEST_VERSION }}'; \
+		helm plugin install {{ HELM_UNITTEST_REPO }}/{{ HELM_UNITTEST_NAME }}:{{ HELM_UNITTEST_VERSION }} --verify=false; \
+	fi
+
+# endregion Tools
+
+[doc('Lint the chart')]
+@lint: tool-helm
+	helm lint .
+
+[doc('Build dependencies')]
+@dep: tool-helm
+	helm dependency update .
+	helm dependency build .
+
+[doc('Run unit tests')]
+@unittest: tool-helmtest
+	helm unittest .
+
+[doc('Lint, build dependencies, and run unit tests')]
+@test: lint dep unittest
