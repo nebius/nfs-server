@@ -1,0 +1,44 @@
+changesDir: .changes
+unreleasedDir: unreleased
+headerPath: header.md
+versionExt: md
+versionFormat: '## {{.Version}}'
+kindFormat: '### {{.Kind}}'
+changeFormat: '* {{.Body}}'
+projectsVersionSeparator: '-'
+
+projects:
+  - key: image
+    label: Docker image
+    changelog: docker/CHANGELOG.md
+    replacements:
+      - path: helm/Chart.yaml
+        find: '^appVersion:.*$'
+        replace: 'appVersion: "{{.VersionNoPrefix}}"'
+
+  - key: chart
+    label: Helm chart
+    changelog: helm/CHANGELOG.md
+    replacements:
+      - path: helm/Chart.yaml
+        find: '^version:.*$'
+        replace: 'version: {{.VersionNoPrefix}}'
+
+kinds:
+  - label: Breaking
+    auto: major
+  - label: Added
+    auto: minor
+  - label: Changed
+    auto: patch
+  - label: Fixed
+    auto: patch
+  - label: Security
+    auto: patch
+
+newlines:
+  afterChangelogHeader: 1
+  afterKind: 1
+  afterChangelogVersion: 1
+  beforeKind: 1
+  endOfVersion: 1

@@ -10,7 +10,10 @@ mod docker
 mod helm
 
 [doc("Justfile management recipes")]
-mod just "just.justfile"
+mod just "jf.just.justfile"
+
+[doc("Changes management recipes")]
+mod change "jf.change.justfile"
 
 [private]
 @default:
