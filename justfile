@@ -3,6 +3,9 @@
 set shell := ["bash", "-uc"]
 set lazy
 
+[doc("Docker image recipes")]
+mod docker
+
 [doc("Helm chart recipes")]
 mod helm
 

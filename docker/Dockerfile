@@ -1,5 +1,6 @@
 FROM alpine:3.22 AS nfs-server
 
+# hadolint ignore=DL3018
 RUN apk add --no-cache --update \
     nfs-utils \
     bash \
@@ -19,5 +20,6 @@ RUN chmod +x /usr/bin/nfsd.sh
 
 EXPOSE 2049/tcp 111/tcp 111/udp 20048/tcp
 
+# hadolint ignore=DL3066
 USER non-root
 ENTRYPOINT ["/usr/bin/nfsd.sh"]
