@@ -16,5 +16,8 @@ indent_size = 4
 indent_size = 4
 trim_trailing_whitespace = false
 
+[*.py]
+indent_size = 4
+
 [{Dockerfile,*.dockerfile}]
 indent_size = 4

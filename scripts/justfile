@@ -1,0 +1,23 @@
+#!/usr/bin/env just --justfile
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+[private]
+@_tool name:
+	if ! command -v {{ name }} >/dev/null 2>&1; then \
+		echo '{{ name }} is missing. Run brew bundle from the repository root on macOS, or install {{ name }} with your package manager.'; \
+		exit 1; \
+	fi
+
+[doc("Format Python scripts")]
+@fmt: (_tool "black")
+	black --workers 1 .
+
+[doc("Lint Python scripts")]
+@lint: (_tool "black") (_tool "mypy")
+	black --check --workers 1 .
+	mypy --config-file ../pyproject.toml .
+
+[doc("Test local release preparation without publishing")]
+@test: (_tool "python3") (_tool "changie")
+	python3 prepare_release_test.py

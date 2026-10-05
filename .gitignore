@@ -31,3 +31,5 @@
 /build/
 /out/
 .docker/
+__pycache__/
+.mypy_cache/
