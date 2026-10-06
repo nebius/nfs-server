@@ -52,4 +52,4 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 [doc('Build the image locally')]
 @build: tool-docker-runtime
-	docker build --tag nfs-server:local .
+	docker build --tag nfsd:local .

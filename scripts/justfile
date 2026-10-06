@@ -5,7 +5,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 [private]
 @_tool name:
 	if ! command -v {{ name }} >/dev/null 2>&1; then \
-		echo '{{ name }} is missing. Run brew bundle from the repository root on macOS, or install {{ name }} with your package manager.'; \
+		echo '{{ name }} is missing. Install {{ name }} with your package manager.'; \
 		exit 1; \
 	fi
 
@@ -18,6 +18,6 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 	black --check --workers 1 .
 	mypy --config-file ../pyproject.toml .
 
-[doc("Test local release preparation without publishing")]
+[doc("Test release scripts without external publication")]
 @test: (_tool "python3") (_tool "changie")
-	python3 prepare_release_test.py
+	python3 -m unittest discover -s . -p '*_test.py'

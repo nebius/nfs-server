@@ -1,4 +1,4 @@
-FROM alpine:3.22 AS nfs-server
+FROM alpine:3.22 AS nfsd
 
 # hadolint ignore=DL3018
 RUN apk add --no-cache --update \

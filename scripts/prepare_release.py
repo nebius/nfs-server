@@ -23,9 +23,9 @@ def run(root: Path, *args: str) -> str:
     return subprocess.check_output(args, cwd=root, text=True).strip()
 
 
-def versions(root: Path) -> dict[str, str]:
+def versions(root: Path, text: str | None = None) -> dict[str, str]:
     """Read stable image and chart versions from Helm metadata."""
-    text = (root / "helm/Chart.yaml").read_text()
+    text = (root / "helm/Chart.yaml").read_text() if text is None else text
 
     result: dict[str, str] = {}
     for project, key in (("image", "appVersion"), ("chart", "version")):
