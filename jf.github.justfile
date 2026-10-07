@@ -2,9 +2,8 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-[private]
-mod scripts "scripts/justfile"
+import "jf.tool.justfile"
 
 [doc("Lint GitHub workflows with actionlint and ShellCheck")]
-@lint: (scripts::_tool "actionlint") (scripts::_tool "shellcheck")
-	actionlint
+@lint: (tool "actionlint") (tool "shellcheck")
+	actionlint -shellcheck='shellcheck'

@@ -3,6 +3,8 @@
 set shell := ["bash", "-uc"]
 set lazy
 
+import "jf.tool.justfile"
+
 [doc("Docker image recipes")]
 mod docker
 
@@ -24,6 +26,7 @@ mod release "jf.release.justfile"
 [doc("GitHub workflow recipes")]
 mod github "jf.github.justfile"
 
+[default]
 [private]
 @default:
 	just --choose

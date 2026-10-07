@@ -2,22 +2,17 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-[private]
-@_tool name:
-	if ! command -v {{ name }} >/dev/null 2>&1; then \
-		echo '{{ name }} is missing. Install {{ if name == "cr" { "chart-releaser" } else { name } }} with your package manager.'; \
-		exit 1; \
-	fi
+import "../jf.tool.justfile"
 
 [doc("Format Python scripts")]
-@fmt: (_tool "black")
+@fmt: (tool "black")
 	black --workers 1 .
 
 [doc("Lint Python scripts")]
-@lint: (_tool "black") (_tool "mypy")
+@lint: (tool "black") (tool "mypy")
 	black --check --workers 1 .
 	mypy --config-file ../pyproject.toml .
 
 [doc("Test release scripts without external publication")]
-@test: (_tool "python3") (_tool "pytest") (_tool "changie") (_tool "docker") (_tool "helm") (_tool "jq")
+@test: (tool "python3") (tool "pytest") (tool "changie") (tool "docker") (tool "helm") (tool "jq")
 	pytest .

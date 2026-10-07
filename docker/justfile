@@ -2,46 +2,22 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# region Tools
+import "../jf.tool.justfile"
 
-[doc('Check if Docker is installed')]
-[private]
-@tool-docker:
-	if ! command -v docker >/dev/null 2>&1; then \
-		echo 'Docker is missing'; \
-		exit 1; \
-	fi;
+# region Tools
 
 [doc('Check if Docker runtime is running')]
 [private]
-@tool-docker-runtime: tool-docker
+@tool-docker-runtime: (tool "docker")
 	if ! docker info >/dev/null 2>&1; then \
 		echo 'Docker runtime is not active. Start Docker runtime'; \
-		exit 1; \
-	fi;
-
-[doc('Check if ShellCheck is installed')]
-[private]
-@tool-shellcheck:
-	if ! command -v shellcheck >/dev/null 2>&1; then \
-		echo 'ShellCheck is missing'; \
-		echo 'Go to https://github.com/koalaman/shellcheck#installing for installation instructions'; \
-		exit 1; \
-	fi;
-
-[doc('Check if Hadolint is installed')]
-[private]
-@tool-hadolint:
-	if ! command -v hadolint >/dev/null 2>&1; then \
-		echo 'Hadolint is missing'; \
-		echo 'Go to https://github.com/hadolint/hadolint#install for installation instructions'; \
 		exit 1; \
 	fi;
 
 # endregion Tools
 
 [doc('Lint the startup script with ShellCheck and Dockerfile with Hadolint')]
-@lint: tool-shellcheck tool-hadolint
+@lint: (tool "shellcheck") (tool "hadolint")
 	bash -n nfsd.sh
 	shellcheck nfsd.sh
 	hadolint Dockerfile
