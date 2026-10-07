@@ -61,5 +61,5 @@ HELM_UNITTEST_VERSION := env_var_or_default("HELM_UNITTEST_VERSION", "1.1.1")
 @unittest: tool-helmtest
 	helm unittest .
 
-[doc('Lint, build dependencies, and run unit tests')]
-@test: lint dep unittest
+[doc('Build dependencies and run unit tests')]
+@test: dep unittest

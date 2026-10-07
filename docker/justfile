@@ -46,8 +46,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 	shellcheck nfsd.sh
 	hadolint Dockerfile
 
-[doc('Lint the startup script and Dockerfile, and check-build the image')]
-@test: lint tool-docker-runtime
+[doc('Check the Dockerfile without building an image')]
+@test: tool-docker-runtime
 	docker build --check .
 
 [doc('Build the image locally')]

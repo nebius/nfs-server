@@ -21,6 +21,9 @@ mod change "jf.change.justfile"
 [doc("Release management recipes")]
 mod release "jf.release.justfile"
 
+[doc("GitHub workflow recipes")]
+mod github "jf.github.justfile"
+
 [private]
 @default:
 	just --choose
