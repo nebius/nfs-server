@@ -174,7 +174,10 @@ class PreparationTests(unittest.TestCase):
                 str(root),
             ]
             result = subprocess.run(
-                command, cwd=directory, capture_output=True, text=True
+                command,
+                cwd=directory,
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("No releasable changes", result.stdout)

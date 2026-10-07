@@ -5,7 +5,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 [private]
 @_tool name:
 	if ! command -v {{ name }} >/dev/null 2>&1; then \
-		echo '{{ name }} is missing. Install {{ name }} with your package manager.'; \
+		echo '{{ name }} is missing. Install {{ if name == "cr" { "chart-releaser" } else { name } }} with your package manager.'; \
 		exit 1; \
 	fi
 
@@ -19,5 +19,5 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 	mypy --config-file ../pyproject.toml .
 
 [doc("Test release scripts without external publication")]
-@test: (_tool "python3") (_tool "changie")
-	python3 -m unittest discover -s . -p '*_test.py'
+@test: (_tool "python3") (_tool "pytest") (_tool "changie") (_tool "docker") (_tool "helm")
+	pytest .

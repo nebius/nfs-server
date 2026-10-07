@@ -3,10 +3,24 @@
 
 import argparse
 import json
+import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import TypedDict
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=(
+        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(sys.stderr),
+    ),
+)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ReleaseManifest(TypedDict):
@@ -101,7 +115,7 @@ def main() -> None:
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"{error}\n")
 
-    print(
+    logger.info(
         json.dumps(manifest, indent=2)
         if manifest is not None
         else "No releasable changes"

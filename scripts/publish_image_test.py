@@ -15,6 +15,7 @@ from unittest.mock import patch
 import prepare_release
 from prepare_release_test import repository
 import publish_image
+import release_common
 
 
 @contextmanager
@@ -46,6 +47,33 @@ def prepared_repository(image_changed: bool = True) -> Iterator[Path]:
 
 class ImagePublicationTests(unittest.TestCase):
     """Exercise local validation and publication failure/retry behavior."""
+
+    def test_default_image_repository(self) -> None:
+        """Publish nfsd by default without changing chart or GitHub naming."""
+        manifest: prepare_release.ReleaseManifest = {
+            "source_sha": "a" * 40,
+            "previous": {"image": "1.0.1", "chart": "1.0.1"},
+            "versions": {"image": "1.0.2", "chart": "1.0.2"},
+            "image_changed": True,
+        }
+
+        with (
+            patch.object(sys, "argv", ["publish_image.py"]),
+            patch.object(publish_image, "validate_manifest", return_value=manifest),
+            patch("publish_image.shutil.which", return_value="/tools/tool"),
+            patch.object(publish_image, "run"),
+            patch.object(prepare_release, "run", return_value="b" * 40),
+            patch.object(publish_image, "publish_image") as publish,
+            redirect_stdout(io.StringIO()),
+        ):
+            publish_image.main()
+            publish.assert_called_once_with(
+                Path(__file__).resolve().parents[1],
+                "nebius/nfs-server",
+                "cr.eu-north1.nebius.cloud/soperator/nfsd:1.0.2",
+                "1.0.2",
+                "b" * 40,
+            )
 
     def test_cli_from_another_directory(self) -> None:
         """Use the same Just endpoint outside the checkout without publishing a chart-only release."""
@@ -128,7 +156,7 @@ class ImagePublicationTests(unittest.TestCase):
         ]
         for value in invalid:
             with self.subTest(value=value), self.assertRaises(ValueError):
-                publish_image.manifest_versions(value)
+                release_common.manifest_versions(value)
 
     def test_tag_checks(self) -> None:
         """Handle absent, lightweight, annotated, conflicting, and failed tag lookups."""
@@ -146,7 +174,7 @@ class ImagePublicationTests(unittest.TestCase):
             with (
                 self.subTest(failure=failure),
                 patch.object(
-                    publish_image,
+                    release_common,
                     "run",
                     return_value=subprocess.CompletedProcess(
                         ["git"], status, output, "network error"
@@ -176,7 +204,7 @@ class ImagePublicationTests(unittest.TestCase):
             with (
                 self.subTest(status=status, output=output, stderr=stderr),
                 patch.object(
-                    publish_image,
+                    release_common,
                     "run",
                     return_value=subprocess.CompletedProcess(
                         ["gh"], status, output, stderr
@@ -195,7 +223,7 @@ class ImagePublicationTests(unittest.TestCase):
             with (
                 self.subTest(output=output),
                 patch.object(
-                    publish_image,
+                    release_common,
                     "run",
                     return_value=subprocess.CompletedProcess(["gh"], 0, output, ""),
                 ),
@@ -459,6 +487,7 @@ class ImagePublicationTests(unittest.TestCase):
                 with (
                     patch.object(sys, "argv", argv),
                     patch.object(publish_image, "run", side_effect=command),
+                    patch.object(release_common, "run", side_effect=command),
                     patch("publish_image.shutil.which", return_value="/tools/tool"),
                     redirect_stdout(io.StringIO()),
                     redirect_stderr(io.StringIO()),
