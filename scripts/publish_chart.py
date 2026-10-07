@@ -237,7 +237,8 @@ touch "$pages_checkout/.nojekyll"
 git -C "$pages_checkout" add index.yaml .nojekyll
 git -C "$pages_checkout" commit -m "Initialize Helm repository"
 git -C "$pages_checkout" push origin {shlex.quote(branch)}
-Then select Settings > Pages > Deploy from a branch > {branch} > /(root)."""
+Then select Settings > Pages > Source > GitHub Actions.
+The release workflow deploys the updated {branch} index explicitly."""
         )
 
     pages.check_returncode()

@@ -1,0 +1,252 @@
+name: Releasing
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths:
+      - helm/Chart.yaml
+      - helm/CHANGELOG.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: releasing
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  REGISTRY_HOST: cr.eu-north1.nebius.cloud
+  REGISTRY_NAMESPACE: cr.eu-north1.nebius.cloud/soperator
+
+jobs:
+  validate:
+    name: Validate prepared promotion
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
+       github.event.pull_request.head.ref == 'next' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: read
+
+    outputs:
+      publish: ${{ steps.manifest.outputs.publish }}
+      image_changed: ${{ steps.manifest.outputs.image_changed }}
+      sha: ${{ steps.source.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Record the exact release commit
+        id: source
+        # language=bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate version increase and committed preparation
+        id: manifest
+        env:
+          PYTHONPATH: scripts
+        # language=python
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          
+          import prepare_release
+          import release_common
+          
+          root = Path.cwd()
+          parents = prepare_release.run(root, "git", "rev-list", "--parents", "-n", "1", "HEAD").split()
+          if len(parents) != 3:
+              raise ValueError("Release from a next-to-main merge commit, not squash/rebase")
+          
+          previous = prepare_release.versions(root, prepare_release.run(root, "git", "show", "HEAD^1:helm/Chart.yaml"))
+          current = prepare_release.versions(root)
+          before = tuple(map(int, previous["chart"].split(".")))
+          after = tuple(map(int, current["chart"].split(".")))
+          
+          changelog = subprocess.run(["git", "diff", "--quiet", "HEAD^1", "HEAD", "--", "helm/CHANGELOG.md"], check=False)
+          if changelog.returncode not in (0, 1):
+              changelog.check_returncode()
+          
+          if after == before and changelog.returncode == 0:
+              print("No chart version/changelog change; nothing to publish")
+              with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+                  output.write("publish=false\n")
+          else:
+              if after <= before:
+                  raise ValueError("Chart changelog changes require a chart version increase; prepare the release first")
+          
+              manifest = release_common.validate_manifest(root)
+              with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+                  output.write("publish=true\n")
+                  output.write(f"image_changed={str(manifest['image_changed']).lower()}\n")
+          PY
+
+      - name: Require an existing Pages index branch and Actions deployment source
+        if: steps.manifest.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # language=bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/gh-pages" --silent
+          source=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type)
+          if [[ "$source" != workflow ]]; then
+            echo 'Set Settings > Pages > Source to GitHub Actions before publishing.' >&2
+            exit 1
+          fi
+
+  publish:
+    name: Build and publish prepared artifacts
+    needs: validate
+    if: needs.validate.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    outputs:
+      pages_sha: ${{ steps.index.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v4.3.0
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        if: needs.validate.outputs.image_changed == 'true'
+        with:
+          image: tonistiigi/binfmt:qemu-v9.2.0
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: needs.validate.outputs.image_changed == 'true'
+        with:
+          version: v0.31.1
+
+      - name: Install chart-releaser
+        # language=bash
+        run: |
+          tool_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location \
+            https://github.com/helm/chart-releaser/releases/download/v1.8.1/chart-releaser_1.8.1_linux_amd64.tar.gz \
+            --output "$tool_dir/chart-releaser_1.8.1_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/helm/chart-releaser/releases/download/v1.8.1/checksums.txt \
+            --output "$tool_dir/checksums.txt"
+          (cd "$tool_dir" && sha256sum --check --ignore-missing checksums.txt)
+          tar -xzf "$tool_dir/chart-releaser_1.8.1_linux_amd64.tar.gz" -C "$tool_dir" cr
+          sudo install -m 755 "$tool_dir/cr" /usr/local/bin/cr
+
+      - name: Configure Git author and registry credentials
+        env:
+          REGISTRY_USERNAME: ${{ vars.NEBIUS_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.NEBIUS_REGISTRY_PASSWORD }}
+        # language=bash
+        run: |
+          : "${REGISTRY_USERNAME:?Set NEBIUS_REGISTRY_USERNAME repository variable}"
+          : "${REGISTRY_PASSWORD:?Set NEBIUS_REGISTRY_PASSWORD repository secret}"
+          
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" \
+            --username "$REGISTRY_USERNAME" --password-stdin
+          printf '%s' "$REGISTRY_PASSWORD" | helm registry login "$REGISTRY_HOST" \
+            --username "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Build and publish the image when needed
+        # language=bash
+        run: |
+          just release publish-image \
+            --registry-repository "$REGISTRY_NAMESPACE/nfsd" \
+            --github-repository "$GITHUB_REPOSITORY"
+
+      - name: Publish the chart and repair the Helm index
+        # language=bash
+        run: |
+          just release publish-chart \
+            --registry-namespace "$REGISTRY_NAMESPACE" \
+            --github-repository "$GITHUB_REPOSITORY"
+
+      - name: Record the published index snapshot
+        id: index
+        # language=bash
+        run: |
+          sha=$(git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+            ls-remote --exit-code "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/gh-pages | awk '{print $1}')
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Remove registry credentials
+        if: always()
+        # language=bash
+        run: |
+          docker logout "$REGISTRY_HOST"
+          helm registry logout "$REGISTRY_HOST"
+
+  pages:
+    name: Deploy Helm repository index
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.publish.outputs.pages_sha }}
+          persist-credentials: false
+
+      - name: Require the published Helm index
+        # language=bash
+        run: test -f index.yaml
+
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: .
+
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        id: deployment

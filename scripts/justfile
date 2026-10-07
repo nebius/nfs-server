@@ -19,5 +19,5 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 	mypy --config-file ../pyproject.toml .
 
 [doc("Test release scripts without external publication")]
-@test: (_tool "python3") (_tool "pytest") (_tool "changie") (_tool "docker") (_tool "helm")
+@test: (_tool "python3") (_tool "pytest") (_tool "changie") (_tool "docker") (_tool "helm") (_tool "jq")
 	pytest .

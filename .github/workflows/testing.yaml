@@ -2,7 +2,7 @@ name: Testing
 
 on:
   pull_request:
-    branches: [main]
+    branches: [next, main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,8 +19,29 @@ defaults:
     shell: bash
 
 jobs:
+  policy:
+    name: Check branch policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Allow only this repository's next branch to target main
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        # language=bash
+        run: |
+          if [[ "$EVENT" == pull_request && "$BASE" == main ]]; then
+            if [[ "$HEAD" != next || "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+              echo "Only this repository's next branch may target main." >&2
+              exit 1
+            fi
+          fi
+
   changes:
     name: Detect changes
+    needs: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -28,11 +49,11 @@ jobs:
       pull-requests: read
 
     outputs:
-      github: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.github == 'true' }}
-      just: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.workflow == 'true' || steps.paths.outputs.just == 'true' }}
-      scripts: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.workflow == 'true' || steps.paths.outputs.scripts == 'true' }}
-      docker: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.workflow == 'true' || steps.paths.outputs.docker == 'true' }}
-      helm: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.workflow == 'true' || steps.paths.outputs.helm == 'true' }}
+      github: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.github == 'true' }}
+      just: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.just == 'true' }}
+      scripts: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.scripts == 'true' }}
+      docker: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.docker == 'true' }}
+      helm: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.helm == 'true' }}
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -45,7 +66,7 @@ jobs:
         id: paths
         if: github.event_name != 'workflow_dispatch'
         with:
-          base: main
+          base: ${{ github.base_ref || github.ref_name }}
           # language=yaml
           filters: |
             github:
@@ -62,6 +83,13 @@ jobs:
               - 'docker/**'
             helm:
               - 'helm/**'
+
+      - name: Select all checks for release promotion or manual testing
+        id: selection
+        env:
+          ALL: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || steps.paths.outputs.workflow == 'true' }}
+        # language=bash
+        run: echo "all=$ALL" >> "$GITHUB_OUTPUT"
 
   lint:
     name: Lint
@@ -237,3 +265,25 @@ jobs:
       - name: Prepare dependencies and run Helm unit tests
         # language=bash
         run: just helm test
+
+  result:
+    name: Testing result
+    needs: [policy, changes, lint, scripts-test, docker-test, helm-test]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful checks, allowing only unselected tests to skip
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        # language=bash
+        run: |
+          jq --exit-status '
+            .policy.result == "success" and
+            .changes.result == "success" and
+            .lint.result == "success" and
+            (.changes.outputs.scripts == "false" or .["scripts-test"].result == "success") and
+            (.changes.outputs.docker == "false" or .["docker-test"].result == "success") and
+            (.changes.outputs.helm == "false" or .["helm-test"].result == "success") and
+            all(.[]; .result == "success" or .result == "skipped")
+          ' <<< "$RESULTS"
