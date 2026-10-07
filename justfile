@@ -30,3 +30,15 @@ mod github "jf.github.justfile"
 [private]
 @default:
 	just --choose
+
+[doc("Format all")]
+fmt: scripts::fmt just::fmt
+
+[doc("Lint all")]
+lint: docker::lint helm::lint scripts::lint github::lint just::lint
+
+[doc("Test all")]
+test: docker::test helm::test scripts::test
+
+[doc("Lint and test all")]
+testolint: lint test
