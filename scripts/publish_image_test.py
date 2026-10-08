@@ -110,6 +110,13 @@ class ImagePublicationTests(unittest.TestCase):
             "image_changed": True,
         }
         with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEBIUS_REGISTRY_HOST": "registry.example",
+                    "NEBIUS_REGISTRY_NAMESPACE": "project",
+                },
+            ),
             patch.object(sys, "argv", ["publish_image.py"]),
             patch.object(publish_image, "validate_manifest", return_value=manifest),
             patch("publish_image.shutil.which", return_value="/tools/tool"),
@@ -122,7 +129,7 @@ class ImagePublicationTests(unittest.TestCase):
             publish.assert_called_once_with(
                 Path(__file__).resolve().parents[1],
                 "nebius/nfs-server",
-                "cr.eu-north1.nebius.cloud/soperator/nfsd:1.0.2",
+                "registry.example/project/nfsd:1.0.2",
                 "1.0.2",
                 "b" * 40,
             )
@@ -143,6 +150,8 @@ class ImagePublicationTests(unittest.TestCase):
                     str(justfile),
                     "release",
                     "publish-image",
+                    "--registry-repository",
+                    "registry.example/project/nfsd",
                     "--root",
                     str(alias),
                 ],

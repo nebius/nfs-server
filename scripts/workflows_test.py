@@ -42,6 +42,59 @@ def shell(
 class WorkflowTests(unittest.TestCase):
     """Check branch policy, required checks, PR arguments, and promotions."""
 
+    def test_native_image_endpoints(self) -> None:
+        """Pass architecture and digest artifacts through Just without remote writes."""
+        with tempfile.TemporaryDirectory(prefix="image digests ") as directory:
+            root = Path(directory)
+            (root / "digests").mkdir()
+            for arch, digit in (("amd64", "a"), ("arm64", "b")):
+                (root / f"digests/{arch}.digest").write_text(
+                    "sha256:" + digit * 64 + "\n"
+                )
+            variables = {
+                "RUNNER_TEMP": str(root),
+                "GITHUB_REPOSITORY": "test/repo",
+                "PLATFORM": "linux/arm64",
+                "ARCH": "arm64",
+            }
+            mock = 'just() { printf "%s\\n" "$@"; }\n'
+            result = shell(
+                root,
+                mock + step("releasing.yaml", "Build and push one platform by digest"),
+                variables,
+            )
+            assert result.returncode == 0, result.stderr
+            assert result.stdout.splitlines() == [
+                "release",
+                "build-image",
+                "--platform",
+                "linux/arm64",
+                "--digest-file",
+                str(root / "digests/arm64.digest"),
+                "--github-repository",
+                "test/repo",
+            ]
+            result = shell(
+                root,
+                mock
+                + step(
+                    "releasing.yaml",
+                    "Assemble and publish the verified multi-platform image",
+                ),
+                variables,
+            )
+            assert result.returncode == 0, result.stderr
+            assert result.stdout.splitlines() == [
+                "release",
+                "publish-image",
+                "--platform-digest",
+                "sha256:" + "a" * 64,
+                "--platform-digest",
+                "sha256:" + "b" * 64,
+                "--github-repository",
+                "test/repo",
+            ]
+
     def test_branch_policy(self) -> None:
         """Reject direct feature and fork-next PRs into main, but allow feature work."""
         code = step(

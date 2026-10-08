@@ -579,7 +579,7 @@ class ChartPublicationTests(unittest.TestCase):
                 text=True,
             )
             assert result.returncode == 1
-            assert "--registry-namespace must be" in result.stderr
+            assert "--registry-namespace:" in result.stderr
         with (
             chart_repository() as root,
             patch.object(

@@ -22,10 +22,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=(
-        logging.StreamHandler(sys.stdout),
-        logging.StreamHandler(sys.stderr),
-    ),
+    handlers=(logging.StreamHandler(sys.stdout),),
 )
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -441,8 +438,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--registry-namespace",
-        default="cr.eu-north1.nebius.cloud/soperator",
-        help="OCI registry/namespace, without oci:// or chart name",
+        help="OCI registry/namespace (defaults to NEBIUS_REGISTRY_HOST/NEBIUS_REGISTRY_NAMESPACE)",
     )
     parser.add_argument(
         "--github-repository",
@@ -460,13 +456,10 @@ def main() -> None:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.github_repository):
             raise ValueError("--github-repository must be owner/repository")
 
-        if not re.fullmatch(
-            r"[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+",
-            args.registry_namespace,
-        ):
-            raise ValueError(
-                "--registry-namespace must be a registry/namespace without a tag"
-            )
+        try:
+            namespace = release_common.registry_namespace(args.registry_namespace)
+        except ValueError as error:
+            raise ValueError(f"--registry-namespace: {error}") from error
 
         release_common.run(
             args.root.resolve(),
@@ -478,7 +471,7 @@ def main() -> None:
         publish_chart(
             args.root.resolve(),
             args.github_repository,
-            args.registry_namespace,
+            namespace,
             args.pages_branch,
         )
 

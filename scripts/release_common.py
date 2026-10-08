@@ -1,17 +1,69 @@
 """Shared validation and GitHub checks for local release publishers."""
 
 import json
+import logging
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import prepare_release
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=(logging.StreamHandler(sys.stdout),),
+)
+logger: logging.Logger = logging.getLogger(__name__)
+
+
+def registry_path(value: str) -> str:
+    """Require a registry destination without a scheme, version tag, or digest."""
+    if not re.fullmatch(
+        r"[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+", value
+    ):
+        raise ValueError("Registry destination must be a registry/path without a tag")
+
+    return value
+
+
+def registry_namespace(override: str | None = None) -> str:
+    """Resolve an explicit namespace or the same environment used by GitHub Actions."""
+    if override is not None:
+        return registry_path(override)
+
+    host = os.environ.get("NEBIUS_REGISTRY_HOST", "")
+    namespace = os.environ.get("NEBIUS_REGISTRY_NAMESPACE", "")
+
+    if not host or not namespace:
+        raise ValueError("Set NEBIUS_REGISTRY_HOST and NEBIUS_REGISTRY_NAMESPACE")
+
+    if not re.fullmatch(r"[a-z0-9.-]+(?::[0-9]+)?", host):
+        raise ValueError(
+            "NEBIUS_REGISTRY_HOST must be a hostname without a scheme/path"
+        )
+
+    return registry_path(f"{host}/{namespace}")
+
+
+def image_repository(override: str | None = None) -> str:
+    """Resolve the image repository, retaining the explicit CLI override."""
+    return (
+        registry_path(override)
+        if override is not None
+        else f"{registry_namespace()}/nfsd"
+    )
 
 
 def run(
     root: Path, *args: str, check: bool = True, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run an external tool without a shell, retaining diagnostics on failure."""
+    logger.info("Running: %s", " ".join(args))
+
     return subprocess.run(
         args,
         cwd=root,

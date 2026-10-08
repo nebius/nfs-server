@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import prepare_release
+import release_common
 from release_common import (
     add_release_section,
     json_object as json_object,
@@ -25,10 +26,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=(
-        logging.StreamHandler(sys.stdout),
-        logging.StreamHandler(sys.stderr),
-    ),
+    handlers=(logging.StreamHandler(sys.stdout),),
 )
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -86,52 +84,78 @@ def add_image_section(body: str, section: str) -> str:
     return add_release_section(body, section)
 
 
-def publish_image(
-    root: Path, repository: str, image: str, version: str, source_sha: str
-) -> None:
-    """Publish or resume a registry image and its GitHub release description."""
-    tag = f"image-v{version}"
-    verify_tag(root, repository, tag, source_sha)
-    body = release_body(root, repository, tag)
-
-    inspect = run(root, "docker", "buildx", "imagetools", "inspect", image, check=False)
-    if inspect.returncode:
-        if not re.search(
+def inspect_image(root: Path, image: str) -> subprocess.CompletedProcess[str] | None:
+    """Treat only an explicitly missing registry manifest as absent."""
+    result = run(root, "docker", "buildx", "imagetools", "inspect", image, check=False)
+    if result.returncode:
+        if re.search(
             r"manifest unknown|no such manifest|name unknown|404 Not Found",
-            inspect.stderr,
+            result.stderr,
             re.I,
         ):
-            inspect.check_returncode()
+            return None
 
-        run(
-            root,
-            "docker",
-            "buildx",
-            "build",
-            "docker",
-            "--platform",
-            "linux/amd64,linux/arm64",
-            "--tag",
-            image,
-            "--push",
-            "--provenance=false",
-            "--sbom=false",
-            "--label",
-            f"org.opencontainers.image.revision={source_sha}",
-            "--label",
-            f"org.opencontainers.image.version={version}",
-            "--label",
-            f"org.opencontainers.image.source=https://github.com/{repository}",
+        result.check_returncode()
+
+    return result
+
+
+def verify_platform(
+    root: Path, ref: str, version: str, sha: str, arch: str | None = None
+) -> str:
+    """Validate a digest-addressed image's architecture and release provenance."""
+    if not DIGEST.fullmatch(ref.rsplit("@", 1)[-1]):
+        raise ValueError("Invalid platform image digest")
+
+    metadata = json_object(
+        json.loads(
+            run(
+                root,
+                "docker",
+                "buildx",
+                "imagetools",
+                "inspect",
+                ref,
+                "--format",
+                "{{json .Image}}",
+            ).stdout
         )
-        inspect = run(root, "docker", "buildx", "imagetools", "inspect", image)
-    else:
-        logger.info(f"Reusing existing registry image {image}")
+    )
 
-    match = re.search(r"^Digest:\s*(sha256:[0-9a-f]{64})\s*$", inspect.stdout, re.M)
+    actual = metadata.get("architecture")
+    if (
+        metadata.get("os") != "linux"
+        or actual not in PLATFORMS
+        or (arch is not None and actual != arch)
+    ):
+        raise ValueError("Image platform differs from the supported Linux architecture")
+
+    labels = json_object(json_object(metadata.get("config")).get("Labels"))
+    if (
+        labels.get("org.opencontainers.image.revision") != sha
+        or labels.get("org.opencontainers.image.version") != version
+    ):
+        raise ValueError(
+            "Existing image belongs to another commit or version; bump the image version"
+        )
+
+    assert isinstance(actual, str)
+
+    return actual
+
+
+def verify_image(
+    root: Path,
+    image: str,
+    inspection: subprocess.CompletedProcess[str],
+    version: str,
+    sha: str,
+) -> tuple[str, dict[str, str]]:
+    """Validate an immutable manifest and both of its platform images."""
+    match = re.search(r"^Digest:\s*(sha256:[0-9a-f]{64})\s*$", inspection.stdout, re.M)
     if match is None:
         raise ValueError("Registry image has no valid manifest digest")
 
-    registry = image.rsplit(":", 1)[0]
     digests = platform_digests(
         run(
             root,
@@ -143,35 +167,106 @@ def publish_image(
             "--raw",
         ).stdout
     )
+    registry = image.rsplit(":", 1)[0]
 
-    for arch in PLATFORMS:
-        ref = f"{registry}@{digests[arch]}"
-        metadata = json_object(
-            json.loads(
-                run(
-                    root,
-                    "docker",
-                    "buildx",
-                    "imagetools",
-                    "inspect",
-                    ref,
-                    "--format",
-                    "{{json .Image}}",
-                ).stdout
+    for arch, digest in digests.items():
+        verify_platform(root, f"{registry}@{digest}", version, sha, arch)
+
+    return match[1], digests
+
+
+def verify_inputs(
+    root: Path, registry: str, inputs: list[str], version: str, sha: str
+) -> dict[str, str]:
+    """Require two distinct digests covering exactly the intended architectures."""
+    if (
+        len(inputs) != 2
+        or len(set(inputs)) != 2
+        or any(not DIGEST.fullmatch(value) for value in inputs)
+    ):
+        raise ValueError("Supply exactly two distinct sha256 platform digests")
+
+    result: dict[str, str] = {}
+    for digest in inputs:
+        arch = verify_platform(root, f"{registry}@{digest}", version, sha)
+        if arch in result:
+            raise ValueError("Duplicate platform architecture")
+
+        result[arch] = digest
+
+    if set(result) != set(PLATFORMS):
+        raise ValueError("Image must support exactly linux/amd64 and linux/arm64")
+
+    return result
+
+
+def publish_image(
+    root: Path,
+    repository: str,
+    image: str,
+    version: str,
+    source_sha: str,
+    platform_inputs: list[str] | None = None,
+) -> None:
+    """Publish or resume a registry image and its GitHub release description."""
+    tag = f"image-v{version}"
+    verify_tag(root, repository, tag, source_sha)
+    body = release_body(root, repository, tag)
+
+    registry = image.rsplit(":", 1)[0]
+    supplied = (
+        verify_inputs(root, registry, platform_inputs, version, source_sha)
+        if platform_inputs is not None
+        else None
+    )
+
+    inspect = inspect_image(root, image)
+    if inspect is None:
+        if supplied is not None:
+            run(
+                root,
+                "docker",
+                "buildx",
+                "imagetools",
+                "create",
+                "--tag",
+                image,
+                *(f"{registry}@{supplied[arch]}" for arch in PLATFORMS),
             )
+        else:
+            run(
+                root,
+                "docker",
+                "buildx",
+                "build",
+                "docker",
+                "--platform",
+                "linux/amd64,linux/arm64",
+                "--tag",
+                image,
+                "--push",
+                "--provenance=false",
+                "--sbom=false",
+                "--label",
+                f"org.opencontainers.image.revision={source_sha}",
+                "--label",
+                f"org.opencontainers.image.version={version}",
+                "--label",
+                f"org.opencontainers.image.source=https://github.com/{repository}",
+            )
+
+        inspect = run(root, "docker", "buildx", "imagetools", "inspect", image)
+    else:
+        logger.info(f"Reusing existing registry image {image}")
+
+    digest, digests = verify_image(root, image, inspect, version, source_sha)
+    if supplied is not None and supplied != digests:
+        raise ValueError(
+            "Existing versioned image contains different platform digests; bump the image version"
         )
-        if metadata.get("os") != "linux" or metadata.get("architecture") != arch:
-            raise ValueError(f"Image platform differs from linux/{arch}")
-        labels = json_object(json_object(metadata.get("config")).get("Labels"))
-        if (
-            labels.get("org.opencontainers.image.revision") != source_sha
-            or labels.get("org.opencontainers.image.version") != version
-        ):
-            raise ValueError(
-                "Existing image belongs to another commit or version; bump the image version"
-            )
 
-    section = image_section(image, match[1])
+    section = image_section(image, digest)
+
     if body is None:
         notes = add_image_section(
             (root / f".changes/image/{version}.md").read_text(), section
@@ -219,8 +314,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--registry-repository",
-        default="cr.eu-north1.nebius.cloud/soperator/nfsd",
-        help="registry image repository without a version tag",
+        help="image repository (defaults to NEBIUS_REGISTRY_HOST/NEBIUS_REGISTRY_NAMESPACE/nfsd)",
+    )
+    parser.add_argument(
+        "--platform-digest",
+        action="append",
+        help="digest of a prebuilt platform image; supply once per architecture",
     )
     parser.add_argument(
         "--github-repository",
@@ -228,19 +327,14 @@ def main() -> None:
         help="GitHub owner/repository for tags and release descriptions",
     )
     args = parser.parse_args()
+
     try:
         root = args.root.resolve()
 
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.github_repository):
             raise ValueError("--github-repository must be owner/repository")
 
-        if not re.fullmatch(
-            r"[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+",
-            args.registry_repository,
-        ):
-            raise ValueError(
-                "--registry-repository must be a registry/repository without a tag"
-            )
+        registry = release_common.image_repository(args.registry_repository)
 
         manifest = validate_manifest(root)
         if not manifest["image_changed"]:
@@ -256,10 +350,22 @@ def main() -> None:
 
         source_sha = prepare_release.run(root, "git", "rev-parse", "HEAD")
         version = manifest["versions"]["image"]
-        image = f"{args.registry_repository}:{version}"
+        image = f"{registry}:{version}"
 
         logger.info(f"Publishing {image} from commit {source_sha}")
-        publish_image(root, args.github_repository, image, version, source_sha)
+
+        if args.platform_digest is None:
+            publish_image(root, args.github_repository, image, version, source_sha)
+        else:
+            publish_image(
+                root,
+                args.github_repository,
+                image,
+                version,
+                source_sha,
+                args.platform_digest,
+            )
+
         logger.info(
             f"Published {image} and https://github.com/{args.github_repository}/releases/tag/image-v{version}"
         )

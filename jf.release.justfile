@@ -9,6 +9,10 @@ import "jf.tool.justfile"
 prepare: (tool "python3") (tool "changie")
 	python3 scripts/prepare_release.py
 
+[doc("Build one platform and push by digest without tagging a release")]
+build-image *args: (tool "python3") (tool "docker") (tool "git")
+	python3 scripts/build_image.py "$@"
+
 [doc("Push a prepared image to the registry and link it in a GitHub release")]
 publish-image *args: (tool "python3") (tool "docker") (tool "gh")
 	python3 scripts/publish_image.py "$@"
