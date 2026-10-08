@@ -2,7 +2,7 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-import "../jf.tool.justfile"
+import "../.justfiles/tool.justfile"
 
 # region Tools
 
@@ -17,15 +17,15 @@ import "../jf.tool.justfile"
 # endregion Tools
 
 [doc('Lint the startup script with ShellCheck and Dockerfile with Hadolint')]
-@lint: (tool "shellcheck") (tool "hadolint")
+lint: (tool "shellcheck") (tool "hadolint")
 	bash -n nfsd.sh
 	shellcheck nfsd.sh
 	hadolint Dockerfile
 
 [doc('Check the Dockerfile without building an image')]
-@test: tool-docker-runtime
+test: tool-docker-runtime
 	docker build --check .
 
 [doc('Build the image locally')]
-@build: tool-docker-runtime
+build: tool-docker-runtime
 	docker build --tag nfsd:local .

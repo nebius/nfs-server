@@ -3,7 +3,7 @@
 set shell := ["bash", "-uc"]
 set lazy
 
-import "jf.tool.justfile"
+import ".justfiles/tool.justfile"
 
 [doc("Docker image recipes")]
 mod docker
@@ -12,13 +12,13 @@ mod docker
 mod helm
 
 [doc("Justfile management recipes")]
-mod just "jf.just.justfile"
+mod just ".justfiles/just.justfile"
 
 [doc("Changes management recipes")]
-mod change "jf.change.justfile"
+mod change ".justfiles/changie.justfile"
 
 [doc("GitHub workflow recipes")]
-mod github "jf.github.justfile"
+mod github ".justfiles/github.justfile"
 
 [default]
 [private]

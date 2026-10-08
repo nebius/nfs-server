@@ -2,7 +2,7 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-import "../jf.tool.justfile"
+import "../.justfiles/tool.justfile"
 
 # region Variables
 
@@ -36,11 +36,11 @@ HELM_UNITTEST_VERSION := env_var_or_default("HELM_UNITTEST_VERSION", "1.1.1")
 # endregion Tools
 
 [doc('Lint the chart')]
-@lint: (tool "helm")
+lint: (tool "helm")
 	helm lint .
 
 [doc('Test Helm chart')]
-@test: tool-helmtest
+test: tool-helmtest
 	helm dependency update .
 	helm dependency build .
 	helm unittest .

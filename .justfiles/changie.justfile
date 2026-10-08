@@ -1,8 +1,9 @@
 #!/usr/bin/env just --justfile
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
+set working-directory := ".."
 
-import "jf.tool.justfile"
+import "tool.justfile"
 
 [doc("Add a Changie fragment for an image or chart change")]
 @new: (tool "changie")
