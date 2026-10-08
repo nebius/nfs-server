@@ -20,18 +20,8 @@ brew "hadolint"
 # Static analysis and lint tool, for (ba)sh scripts
 brew "shellcheck"
 
-# Python code formatter
-brew "black"
-# Experimental optional static type checker for Python
-brew "mypy"
-# Simple powerful testing with Python
-brew "pytest"
-
 # Kubernetes package manager
 brew "helm"
-tap "helm/tap"
-# Hosting Helm Charts via GitHub Pages and Releases
-brew "chart-releaser"
 
 # Static checker for GitHub Actions workflow files
 brew "actionlint"

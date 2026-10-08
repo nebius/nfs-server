@@ -23,6 +23,7 @@ defaults:
 env:
   NEBIUS_REGISTRY_HOST: ${{ vars.NEBIUS_REGISTRY_HOST }}
   NEBIUS_REGISTRY_NAMESPACE: ${{ vars.NEBIUS_REGISTRY_NAMESPACE }}
+  IMAGE_REPOSITORY: ${{ vars.NEBIUS_REGISTRY_HOST }}/${{ vars.NEBIUS_REGISTRY_NAMESPACE }}/nfsd
 
 jobs:
   validate:
@@ -42,6 +43,9 @@ jobs:
       publish: ${{ steps.manifest.outputs.publish }}
       image_changed: ${{ steps.manifest.outputs.image_changed }}
       sha: ${{ steps.source.outputs.sha }}
+      image_version: ${{ steps.manifest.outputs.image_version }}
+      chart_version: ${{ steps.manifest.outputs.chart_version }}
+      chart_name: ${{ steps.manifest.outputs.chart_name }}
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -50,9 +54,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.12'
+      - name: Install pinned YAML tool
+        # language=bash
+        run: |
+          tool_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location \
+            https://github.com/mikefarah/yq/releases/download/v4.48.2/yq_linux_amd64 \
+            --output "$tool_dir/yq"
+          echo "0ffc35320180d4911bc3a772934da508715e08af444cb33d4d43660065e25bcc  $tool_dir/yq" | sha256sum --check
+          sudo install -m 755 "$tool_dir/yq" /usr/local/bin/yq
 
       - name: Record the exact release commit
         id: source
@@ -61,55 +71,71 @@ jobs:
 
       - name: Validate version increase and committed preparation
         id: manifest
-        env:
-          PYTHONPATH: scripts
-        # language=python
+        # language=bash
         run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import subprocess
-          
-          import prepare_release
-          import release_common
-          
-          root = Path.cwd()
-          parents = prepare_release.run(root, "git", "rev-list", "--parents", "-n", "1", "HEAD").split()
-          if len(parents) != 3:
-              raise ValueError("Release from a next-to-main merge commit, not squash/rebase")
-          
-          previous = prepare_release.versions(root, prepare_release.run(root, "git", "show", "HEAD^1:helm/Chart.yaml"))
-          current = prepare_release.versions(root)
-          before = tuple(map(int, previous["chart"].split(".")))
-          after = tuple(map(int, current["chart"].split(".")))
-          
-          changelog = subprocess.run(["git", "diff", "--quiet", "HEAD^1", "HEAD", "--", "helm/CHANGELOG.md"], check=False)
-          if changelog.returncode not in (0, 1):
-              changelog.check_returncode()
-          
-          if after == before and changelog.returncode == 0:
-              print("No chart version/changelog change; nothing to publish")
-              with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-                  output.write("publish=false\n")
-          else:
-              if after <= before:
-                  raise ValueError("Chart changelog changes require a chart version increase; prepare the release first")
-          
-              manifest = release_common.validate_manifest(root)
-              with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-                  output.write("publish=true\n")
-                  output.write(f"image_changed={str(manifest['image_changed']).lower()}\n")
-          PY
+          parents=$(git rev-list --parents -n 1 HEAD)
+          read -r -a parents <<< "$parents"
+          if (( ${#parents[@]} != 3 )); then
+            echo 'Release from a next-to-main merge commit, not squash/rebase.' >&2
+            exit 1
+          fi
+
+          current=$(yq -o=json '{"image": .appVersion, "chart": .version}' helm/Chart.yaml)
+          previous=$(git show HEAD^1:helm/Chart.yaml | yq -o=json '{"image": .appVersion, "chart": .version}')
+          jq --exit-status --null-input --argjson current "$current" --argjson previous "$previous" '
+            def semver: type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$");
+            [$current[], $previous[]] | all(.[]; semver)
+          '
+          chart=$(jq --raw-output '.chart' <<< "$current")
+          image=$(jq --raw-output '.image' <<< "$current")
+          if [[ "$chart" == "$(jq --raw-output '.chart' <<< "$previous")" ]] &&
+            git diff --quiet HEAD^1 HEAD -- helm/CHANGELOG.md; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          jq --exit-status --null-input --argjson current "$current" --argjson previous "$previous" '
+            def parts: split(".") | map(tonumber);
+            ($current.chart | parts) > ($previous.chart | parts)
+          '
+
+          jq --exit-status --argjson current "$current" '
+            def semver: type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$");
+            def parts: split(".") | map(tonumber);
+            (.source_sha | type == "string" and test("^[0-9a-f]{40}$")) and
+            (.image_changed | type == "boolean") and
+            (.versions == $current) and
+            ([.previous.image, .previous.chart] | all(.[]; semver)) and
+            ((.versions.chart | parts) > (.previous.chart | parts)) and
+            (if .image_changed then (.versions.image | parts) > (.previous.image | parts)
+             else .versions.image == .previous.image end)
+          ' .changes/release.json
+          source=$(jq --raw-output '.source_sha' .changes/release.json)
+          git merge-base --is-ancestor "$source" HEAD
+          baseline=$(git show "$source:helm/Chart.yaml" | yq -o=json '{"image": .appVersion, "chart": .version}')
+          jq --exit-status --argjson baseline "$baseline" '.previous == $baseline' .changes/release.json
+          git diff --exit-code "$source" HEAD -- docker/ \
+            ':(exclude)docker/README.md' ':(exclude)docker/CHANGELOG.md'
+          test -f ".changes/chart/$chart.md"
+          changed=$(jq --raw-output '.image_changed' .changes/release.json)
+          if [[ "$changed" == true ]]; then
+            test -f ".changes/image/$image.md"
+          fi
+          name=$(yq '.name' helm/Chart.yaml)
+          [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+          printf 'publish=true\nimage_changed=%s\nimage_version=%s\nchart_version=%s\nchart_name=%s\n' \
+            "$changed" "$image" "$chart" "$name" >> "$GITHUB_OUTPUT"
 
       - name: Validate registry configuration
         if: steps.manifest.outputs.publish == 'true'
         env:
-          PYTHONPATH: scripts
           REGISTRY_USERNAME: ${{ vars.NEBIUS_REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.NEBIUS_REGISTRY_PASSWORD }}
         # language=bash
         run: |
-          python -c 'import release_common; release_common.registry_namespace()'
+          : "${NEBIUS_REGISTRY_HOST:?Set NEBIUS_REGISTRY_HOST repository variable}"
+          : "${NEBIUS_REGISTRY_NAMESPACE:?Set NEBIUS_REGISTRY_NAMESPACE repository variable}"
+          [[ "$NEBIUS_REGISTRY_HOST" =~ ^[a-z0-9.-]+(:[0-9]+)?$ ]]
+          [[ "$NEBIUS_REGISTRY_NAMESPACE" =~ ^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$ ]]
           : "${REGISTRY_USERNAME:?Set NEBIUS_REGISTRY_USERNAME repository variable}"
           : "${REGISTRY_PASSWORD:?Set NEBIUS_REGISTRY_PASSWORD repository secret}"
 
@@ -152,14 +178,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
-          just-version: '1.58.0'
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.12'
-
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           version: v0.31.1
@@ -174,15 +192,30 @@ jobs:
             --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build and push one platform by digest
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         env:
-          PLATFORM: ${{ matrix.platform }}
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: docker
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.NEBIUS_REGISTRY_HOST }}/${{ env.NEBIUS_REGISTRY_NAMESPACE }}/nfsd,push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+          sbom: false
+          labels: |
+            org.opencontainers.image.revision=${{ needs.validate.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.image_version }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Save platform digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
           ARCH: ${{ matrix.arch }}
         # language=bash
         run: |
-          just release build-image \
-            --platform "$PLATFORM" \
-            --digest-file "$RUNNER_TEMP/digests/$ARCH.digest" \
-            --github-repository "$GITHUB_REPOSITORY"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/digests/$ARCH.digest"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -197,7 +230,7 @@ jobs:
         run: docker logout "$NEBIUS_REGISTRY_HOST"
 
   publish:
-    name: Build and publish prepared artifacts
+    name: Publish prepared artifacts
     needs: [validate, build-image]
     if: >-
       always() && needs.validate.result == 'success' &&
@@ -209,6 +242,10 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      RELEASE_SHA: ${{ needs.validate.outputs.sha }}
+      IMAGE_VERSION: ${{ needs.validate.outputs.image_version }}
+      CHART_VERSION: ${{ needs.validate.outputs.chart_version }}
+      CHART_NAME: ${{ needs.validate.outputs.chart_name }}
 
     outputs:
       pages_sha: ${{ steps.index.outputs.sha }}
@@ -219,14 +256,6 @@ jobs:
           ref: ${{ needs.validate.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
-          just-version: '1.58.0'
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.12'
 
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
@@ -260,8 +289,8 @@ jobs:
           : "${REGISTRY_USERNAME:?Set NEBIUS_REGISTRY_USERNAME repository variable}"
           : "${REGISTRY_PASSWORD:?Set NEBIUS_REGISTRY_PASSWORD repository secret}"
           
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           
           printf '%s' "$REGISTRY_PASSWORD" | docker login "$NEBIUS_REGISTRY_HOST" \
             --username "$REGISTRY_USERNAME" --password-stdin
@@ -275,20 +304,74 @@ jobs:
           path: ${{ runner.temp }}/digests
           merge-multiple: true
 
-      - name: Assemble and publish the verified multi-platform image
+      - name: Assemble and publish the multi-platform image
         if: needs.validate.outputs.image_changed == 'true'
         # language=bash
         run: |
-          just release publish-image \
-            --platform-digest "$(cat "$RUNNER_TEMP/digests/amd64.digest")" \
-            --platform-digest "$(cat "$RUNNER_TEMP/digests/arm64.digest")" \
-            --github-repository "$GITHUB_REPOSITORY"
+          amd64=$(cat "$RUNNER_TEMP/digests/amd64.digest")
+          arm64=$(cat "$RUNNER_TEMP/digests/arm64.digest")
+          [[ "$amd64" =~ ^sha256:[0-9a-f]{64}$ && "$arm64" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools create --tag "$IMAGE_REPOSITORY:$IMAGE_VERSION" \
+            "$IMAGE_REPOSITORY@$amd64" "$IMAGE_REPOSITORY@$arm64"
 
-      - name: Publish the chart and repair the Helm index
+      - name: Create image release with registry reference
+        if: needs.validate.outputs.image_changed == 'true'
         # language=bash
         run: |
-          just release publish-chart \
-            --github-repository "$GITHUB_REPOSITORY"
+          notes="$RUNNER_TEMP/image-notes.md"
+          cat ".changes/image/$IMAGE_VERSION.md" > "$notes"
+          # Backticks are literal Markdown, not shell substitutions.
+          # shellcheck disable=SC2016
+          printf '\n## Container image\n\nImage: `%s:%s`\n\n```sh\ndocker pull %s:%s\n```\n' \
+            "$IMAGE_REPOSITORY" "$IMAGE_VERSION" "$IMAGE_REPOSITORY" "$IMAGE_VERSION" >> "$notes"
+          gh release create "image-v$IMAGE_VERSION" --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_SHA" --latest=false --title "NFS server image $IMAGE_VERSION" \
+            --notes-file "$notes"
+
+      - name: Package and push the chart
+        # language=bash
+        run: |
+          work="$RUNNER_TEMP/chart-release"
+          mkdir -p "$work/packages"
+          cp -R helm "$work/chart"
+          cp ".changes/chart/$CHART_VERSION.md" "$work/chart/RELEASE-NOTES.md"
+          # Backticks are literal Markdown, not shell substitutions.
+          # shellcheck disable=SC2016
+          printf '\n## Registry artifacts\n\nImage: `%s:%s`\n\n```sh\nhelm upgrade --install nfs-server oci://%s/%s/%s --version %s\n```\n' \
+            "$IMAGE_REPOSITORY" "$IMAGE_VERSION" "$NEBIUS_REGISTRY_HOST" \
+            "$NEBIUS_REGISTRY_NAMESPACE" "$CHART_NAME" "$CHART_VERSION" >> "$work/chart/RELEASE-NOTES.md"
+          helm lint "$work/chart"
+          helm package "$work/chart" --destination "$work/packages"
+          helm push "$work/packages/$CHART_NAME-$CHART_VERSION.tgz" \
+            "oci://$NEBIUS_REGISTRY_HOST/$NEBIUS_REGISTRY_NAMESPACE"
+
+      - name: Create chart release and update Helm index
+        env:
+          CR_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.validate.outputs.sha }}
+        # language=bash
+        run: |
+          work="$RUNNER_TEMP/chart-release"
+          owner=${GITHUB_REPOSITORY%%/*}
+          repository=${GITHUB_REPOSITORY#*/}
+          common=(--owner "$owner" --git-repo "$repository" --package-path "$work/packages"
+            --release-name-template '{{ .Name }}-{{ .Version }}')
+          cr upload "${common[@]}" --commit "$RELEASE_SHA" \
+            --release-notes-file RELEASE-NOTES.md --make-release-latest=false
+
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+            clone --single-branch --branch gh-pages "https://github.com/$GITHUB_REPOSITORY.git" "$work/pages"
+          (cd "$work/pages" && cr index "${common[@]}" --pages-branch gh-pages --pages-index-path index.yaml \
+            --index-path "$work/index.yaml" --push=false)
+          if [[ -f "$work/index.yaml" ]]; then
+            cp "$work/index.yaml" "$work/pages/index.yaml"
+            git -C "$work/pages" add index.yaml
+            if ! git -C "$work/pages" diff --cached --quiet; then
+              git -C "$work/pages" commit --message 'Update Helm repository index'
+              git -C "$work/pages" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+                push origin HEAD:refs/heads/gh-pages
+            fi
+          fi
 
       - name: Record the published index snapshot
         id: index

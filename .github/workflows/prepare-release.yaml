@@ -61,13 +61,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
-          just-version: '1.58.0'
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.12'
+      - name: Install pinned YAML tool
+        # language=bash
+        run: |
+          tool_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location \
+            https://github.com/mikefarah/yq/releases/download/v4.48.2/yq_linux_amd64 \
+            --output "$tool_dir/yq"
+          echo "0ffc35320180d4911bc3a772934da508715e08af444cb33d4d43660065e25bcc  $tool_dir/yq" | sha256sum --check
+          sudo install -m 755 "$tool_dir/yq" /usr/local/bin/yq
 
       - name: Install Changie
         # language=bash
@@ -87,13 +89,32 @@ jobs:
         id: changes
         # language=bash
         run: |
-          just release prepare
-          if [[ -z "$(git status --porcelain)" ]]; then
+          previous=$(yq -o=json '{"image": .appVersion, "chart": .version}' helm/Chart.yaml)
+          source=$(git rev-parse HEAD)
+          shopt -s nullglob
+          image_changes=(.changes/unreleased/image-*.yaml)
+          chart_changes=(.changes/unreleased/chart-*.yaml)
+          if (( ${#image_changes[@]} == 0 && ${#chart_changes[@]} == 0 )); then
             echo 'prepared=false' >> "$GITHUB_OUTPUT"
             echo 'No releasable changes; no PR created.' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'prepared=true' >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          image_changed=false
+          if (( ${#image_changes[@]} > 0 )); then
+            image_changed=true
+            changie batch auto -j image --allow-no-changes=false
+            image=$(yq '.appVersion' helm/Chart.yaml)
+            changie new -j chart -k Changed -b "Update NFS server image to $image." --interactive=false
+          fi
+          changie batch auto -j chart --allow-no-changes=false
+          changie merge
+          versions=$(yq -o=json '{"image": .appVersion, "chart": .version}' helm/Chart.yaml)
+          jq --null-input --arg source "$source" --argjson previous "$previous" \
+            --argjson versions "$versions" --argjson changed "$image_changed" \
+            '{source_sha: $source, previous: $previous, versions: $versions, image_changed: $changed}' \
+            > .changes/release.json
+          echo 'prepared=true' >> "$GITHUB_OUTPUT"
 
       - name: Commit prepared files and open an editable PR
         if: steps.changes.outputs.prepared == 'true'
@@ -125,7 +146,7 @@ jobs:
             'Approve workflows to run on this bot-created PR, then require the Testing result check before merging into next.' \
             'Afterward, promote next to main using a merge commit; publication runs only after that promotion.' \
             '' \
-            'Local validation: `just github lint`, `just just lint`, `just scripts lint`, `just scripts test`, `just helm lint`, `just helm test`.')
+            'Local validation: `just github lint`, `just just lint`, `just helm lint`, `just helm test`. Building and publishing run only in CI.')
           
           url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base next --head "$branch" \
             --title "Prepare release: chart $version" --body "$body")

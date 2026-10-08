@@ -51,7 +51,6 @@ jobs:
     outputs:
       github: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.github == 'true' }}
       just: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.just == 'true' }}
-      scripts: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.scripts == 'true' }}
       docker: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.docker == 'true' }}
       helm: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.helm == 'true' }}
 
@@ -76,9 +75,6 @@ jobs:
               - '.github/workflows/testing.yaml'
             just:
               - '**/*justfile'
-            scripts:
-              - 'scripts/**'
-              - 'pyproject.toml'
             docker:
               - 'docker/**'
             helm:
@@ -102,19 +98,9 @@ jobs:
           persist-credentials: false
 
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        if: needs.changes.outputs.github == 'true' || needs.changes.outputs.just == 'true' || needs.changes.outputs.scripts == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.helm == 'true'
+        if: needs.changes.outputs.github == 'true' || needs.changes.outputs.just == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.helm == 'true'
         with:
           just-version: '1.58.0'
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        if: needs.changes.outputs.scripts == 'true'
-        with:
-          python-version: '3.12'
-
-      - name: Install Python linters
-        if: needs.changes.outputs.scripts == 'true'
-        # language=bash
-        run: python -m pip install black==26.10.0 mypy==2.4.0
 
       - name: Install ShellCheck
         if: needs.changes.outputs.github == 'true' || needs.changes.outputs.docker == 'true'
@@ -167,11 +153,6 @@ jobs:
         # language=bash
         run: just just lint
 
-      - name: Lint Python scripts
-        if: needs.changes.outputs.scripts == 'true'
-        # language=bash
-        run: just scripts lint
-
       - name: Lint Docker files
         if: needs.changes.outputs.docker == 'true'
         # language=bash
@@ -181,48 +162,6 @@ jobs:
         if: needs.changes.outputs.helm == 'true'
         # language=bash
         run: just helm lint
-
-  scripts-test:
-    name: Test Python scripts
-    needs: [changes, lint]
-    if: needs.changes.outputs.scripts == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
-          just-version: '1.58.0'
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.12'
-
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
-        with:
-          version: v4.3.0
-
-      - name: Install script test tools
-        # language=bash
-        run: |
-          python -m pip install pytest==9.1.1
-          tool_dir=$(mktemp -d)
-          curl --fail --silent --show-error --location \
-            https://github.com/miniscruff/changie/releases/download/v1.26.0/changie_1.26.0_linux_amd64.tar.gz \
-            --output "$tool_dir/changie_1.26.0_linux_amd64.tar.gz"
-          curl --fail --silent --show-error --location \
-            https://github.com/miniscruff/changie/releases/download/v1.26.0/checksums.txt \
-            --output "$tool_dir/checksums.txt"
-          (cd "$tool_dir" && sha256sum --check --ignore-missing checksums.txt)
-          tar -xzf "$tool_dir/changie_1.26.0_linux_amd64.tar.gz" -C "$tool_dir" changie
-          sudo install -m 755 "$tool_dir/changie" /usr/local/bin/changie
-
-      - name: Test scripts
-        # language=bash
-        run: just scripts test
 
   docker-test:
     name: Test Dockerfile
@@ -268,7 +207,7 @@ jobs:
 
   result:
     name: Testing result
-    needs: [policy, changes, lint, scripts-test, docker-test, helm-test]
+    needs: [policy, changes, lint, docker-test, helm-test]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -282,7 +221,6 @@ jobs:
             .policy.result == "success" and
             .changes.result == "success" and
             .lint.result == "success" and
-            (.changes.outputs.scripts == "false" or .["scripts-test"].result == "success") and
             (.changes.outputs.docker == "false" or .["docker-test"].result == "success") and
             (.changes.outputs.helm == "false" or .["helm-test"].result == "success") and
             all(.[]; .result == "success" or .result == "skipped")
