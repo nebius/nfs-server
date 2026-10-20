@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An NFS server Docker image and Helm chart for shared storage in Kubernetes. Installation commands and the Helm chart repository.">
+  <meta name="color-scheme" content="light">
+  <title>NFS Server — Helm repository</title>
+  <style>
+    :root { color: #162c39; background: #f5f5ef; font-family: system-ui, sans-serif; line-height: 1.6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: #225c49; text-underline-offset: .2em; }
+    a:hover { color: #102f24; }
+    a:focus-visible { outline: 3px solid #225c49; outline-offset: 5px; }
+    .page { max-width: 960px; margin: auto; padding: 0 28px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 28px 0; border-bottom: 1px solid #d7ded5; }
+    .brand { font-size: .85rem; font-weight: 750; letter-spacing: .12em; }
+    header a { font-size: .9rem; }
+    main { padding: 66px 0 48px; }
+    .eyebrow { margin: 0 0 14px; color: #3f6758; font-size: .75rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(2.8rem, 7vw, 4.5rem); line-height: 1.1; letter-spacing: -.055em; font-weight: 700; }
+    .intro { max-width: 600px; margin: 22px 0 25px; color: #4a5c63; font-size: 1.15rem; }
+    .tags { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 44px; }
+    .tag { padding: 4px 12px; border: 1px solid #cbd8cb; border-radius: 20px; color: #315446; font-size: .75rem; }
+    .install { overflow: hidden; border: 1px solid #ccd5cf; border-radius: 12px; background: #fff; }
+    .install-heading { padding: 19px 24px; }
+    h2 { margin: 0; font-size: 1.1rem; font-weight: 650; }
+    .install-heading p { margin: 3px 0 0; color: #52636a; font-size: .9rem; }
+    pre { margin: 0; padding: 25px 24px; overflow-x: auto; background: #162c39; color: #edf4ec; font-size: .83rem; line-height: 1.9; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .comment { color: #b1c7c4; }
+    .resources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 25px; padding: 32px 0; }
+    .resources a { font-weight: 650; }
+    .resources p { margin: 7px 0 0; font-size: .88rem; color: #52636a; }
+    footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 22px 0 30px; border-top: 1px solid #d7ded5; color: #52636a; font-size: .8rem; }
+    @media (max-width: 600px) {
+      .page { padding: 0 20px; }
+      main { padding-top: 42px; }
+      .resources { grid-template-columns: 1fr; gap: 22px; }
+      .install-heading, pre { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <span class="brand">NEBIUS / NFS SERVER</span>
+      <a href="https://github.com/nebius/nfs-server">View source &nearr;</a>
+    </header>
+    <main>
+      <p class="eyebrow">Helm chart repository</p>
+      <h1>Shared storage.<br>Ready for Kubernetes.</h1>
+      <p class="intro">An NFS server Docker image and Helm chart to deploy shared storage in your cluster.</p>
+      <div class="tags" aria-label="Available packages">
+        <span class="tag">Helm chart</span>
+        <span class="tag">Docker image</span>
+        <span class="tag">amd64 + arm64</span>
+      </div>
+      <section class="install" aria-labelledby="install-title">
+        <div class="install-heading">
+          <h2 id="install-title">Install with Helm</h2>
+          <p>Add the repository, then install the latest chart. Helm and access to a Kubernetes cluster are required.</p>
+        </div>
+        <pre tabindex="0" aria-label="Helm installation commands"><code><span class="comment"># Add the chart repository</span>
+helm repo add nebius-nfs https://nebius.github.io/nfs-server/
+helm repo update
+
+<span class="comment"># Install or upgrade the NFS server</span>
+helm upgrade --install nfs-server nebius-nfs/nfs-server</code></pre>
+      </section>
+      <nav class="resources" aria-label="Project resources">
+        <div>
+          <a href="index.yaml">Chart index &rarr;</a>
+          <p>The version catalog used by Helm.</p>
+        </div>
+        <div>
+          <a href="https://github.com/nebius/nfs-server/releases">Releases &rarr;</a>
+          <p>Release notes and packaged charts.</p>
+        </div>
+        <div>
+          <a href="https://github.com/nebius/nfs-server/blob/main/helm/README.md">Chart configuration &rarr;</a>
+          <p>Storage, networking, and chart values.</p>
+        </div>
+      </nav>
+    </main>
+    <footer>
+      <span>Nebius &middot; Apache License 2.0</span>
+      <a href="https://github.com/nebius/nfs-server/blob/main/CONTRIBUTING.md">Contribute to the project &nearr;</a>
+    </footer>
+  </div>
+</body>
+</html>

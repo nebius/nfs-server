@@ -3,6 +3,27 @@ entries:
   nfs-server:
   - apiVersion: v2
     appVersion: 1.0.1
+    created: "2026-10-20T11:18:10.098773434Z"
+    description: A Helm chart for NFS server deployment
+    digest: 5047c5521c6ddac32e6d1a75abb6b2a1bff1b05d4e2a290b82693409553999b8
+    home: https://github.com/nebius/nfs-server
+    keywords:
+    - nfs
+    - storage
+    - filesystem
+    kubeVersion: '>=1.20.0-0'
+    maintainers:
+    - email: support@nebius.com
+      name: Nebius Team
+    name: nfs-server
+    sources:
+    - https://github.com/nebius/nfs-server/tree/main/
+    type: application
+    urls:
+    - https://github.com/nebius/nfs-server/releases/download/nfs-server-2.0.0/nfs-server-2.0.0.tgz
+    version: 2.0.0
+  - apiVersion: v2
+    appVersion: 1.0.1
     created: "2026-10-20T09:58:00.72301819Z"
     description: A Helm chart for NFS server deployment
     digest: b710437c7157050e8d2dea993d5c262e76fbe5b912679a05acf83bdb6e69ef44
@@ -22,4 +43,4 @@ entries:
     urls:
     - https://github.com/nebius/nfs-server/releases/download/nfs-server-1.0.1/nfs-server-1.0.1.tgz
     version: 1.0.1
-generated: "2026-10-20T09:58:00.723025454Z"
+generated: "2026-10-20T11:18:10.098780294Z"
