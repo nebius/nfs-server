@@ -442,12 +442,13 @@ jobs:
             --index-path "$work/index.yaml" --push=false)
           if [[ -f "$work/index.yaml" ]]; then
             cp "$work/index.yaml" "$work/pages/index.yaml"
-            git -C "$work/pages" add index.yaml
-            if ! git -C "$work/pages" diff --cached --quiet; then
-              git -C "$work/pages" commit --message 'Update Helm repository index'
-              git -C "$work/pages" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-                push origin HEAD:refs/heads/gh-pages
-            fi
+          fi
+          cp docs/index.html "$work/pages/index.html"
+          git -C "$work/pages" add index.yaml index.html
+          if ! git -C "$work/pages" diff --cached --quiet; then
+            git -C "$work/pages" commit --message 'Update Helm repository site'
+            git -C "$work/pages" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+              push origin HEAD:refs/heads/gh-pages
           fi
 
       - name: Record the published index snapshot
@@ -466,7 +467,7 @@ jobs:
           rm -f "$HOME/.nebius/config.yaml" "${DOCKER_CONFIG:-$HOME/.docker}/config.json"
 
   pages:
-    name: Deploy Helm repository index
+    name: Deploy Helm repository site
     needs: publish
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -484,15 +485,17 @@ jobs:
           ref: ${{ needs.publish.outputs.pages_sha }}
           persist-credentials: false
 
-      - name: Require the published Helm index
+      - name: Require the published Helm index and homepage
         # language=bash
-        run: test -f index.yaml
+        run: |
+          test -f index.yaml
+          test -f index.html
 
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
-      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: .
 
-      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
         id: deployment
