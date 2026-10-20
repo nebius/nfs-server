@@ -8,6 +8,11 @@ on:
       - helm/Chart.yaml
       - helm/CHANGELOG.md
   workflow_dispatch:
+    inputs:
+      publish_existing:
+        description: Publish both existing Chart.yaml versions without release preparation
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,7 +32,7 @@ env:
 
 jobs:
   validate:
-    name: Validate prepared promotion
+    name: Validate release
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
@@ -69,10 +74,26 @@ jobs:
         # language=bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Validate version increase and committed preparation
+      - name: Validate versions and release preparation
         id: manifest
+        env:
+          PUBLISH_EXISTING: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_existing && github.ref == 'refs/heads/main' }}
         # language=bash
         run: |
+          if [[ "$PUBLISH_EXISTING" == true ]]; then
+            current=$(yq -o=json '{"image": .appVersion, "chart": .version}' helm/Chart.yaml)
+            jq --exit-status 'all(.[]; type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))' <<< "$current"
+            image=$(jq --raw-output '.image' <<< "$current")
+            chart=$(jq --raw-output '.chart' <<< "$current")
+            name=$(yq '.name' helm/Chart.yaml)
+            [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+            test -f ".changes/image/$image.md"
+            test -f ".changes/chart/$chart.md"
+            printf 'publish=true\nimage_changed=true\nimage_version=%s\nchart_version=%s\nchart_name=%s\n' \
+              "$image" "$chart" "$name" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           parents=$(git rev-list --parents -n 1 HEAD)
           read -r -a parents <<< "$parents"
           if (( ${#parents[@]} != 3 )); then
@@ -311,6 +332,47 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Refuse existing artifacts for manual baseline publication
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_existing
+        # language=bash
+        run: |
+          error_file="$RUNNER_TEMP/existing-artifact-error"
+          response_file="$RUNNER_TEMP/existing-artifact-response"
+
+          require_missing_manifest() {
+            local reference=$1
+            if docker buildx imagetools inspect --raw "$reference" > /dev/null 2> "$error_file"; then
+              echo "Refusing to overwrite existing registry artifact: $reference" >&2
+              exit 1
+            fi
+            # Accept only explicit missing-manifest responses, never generic lookup failures.
+            if ! grep -Fxq "ERROR: $reference: not found" "$error_file" &&
+               ! grep -Eiq 'manifest unknown|name unknown|MANIFEST_UNKNOWN|NAME_UNKNOWN' "$error_file"; then
+              cat "$error_file" >&2
+              exit 1
+            fi
+          }
+
+          require_missing_github_resource() {
+            local endpoint=$1
+            if gh api --include --silent "$endpoint" > "$response_file" 2> "$error_file"; then
+              echo "Refusing to overwrite existing GitHub resource: $endpoint" >&2
+              exit 1
+            fi
+            if ! head -n 1 "$response_file" | grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)'; then
+              cat "$error_file" >&2
+              exit 1
+            fi
+          }
+
+          gh api "repos/$GITHUB_REPOSITORY" --silent
+          require_missing_manifest "$IMAGE_REPOSITORY:$IMAGE_VERSION"
+          require_missing_manifest "$NEBIUS_REGISTRY_HOST/$NEBIUS_REGISTRY_NAMESPACE/$CHART_NAME:$CHART_VERSION"
+          for tag in "image-v$IMAGE_VERSION" "$CHART_NAME-$CHART_VERSION"; do
+            require_missing_github_resource "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag"
+            require_missing_github_resource "repos/$GITHUB_REPOSITORY/releases/tags/$tag"
+          done
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.validate.outputs.image_changed == 'true'
