@@ -4,6 +4,7 @@
 
 - [docker/](docker/) contains the NFS server Dockerfile, startup script, and image changelog
 - [helm/](helm/) contains the Helm chart, values, template tests, and chart changelog
+- [docs/](docs/) contains the static Helm repository homepage
 - [.justfiles/](.justfiles/) contains shared recipes for tooling, changelogs, Justfile formatting, and workflow linting
   The root [justfile](justfile) exposes these alongside the Docker and Helm modules
 - [.changes/](.changes/) stores unreleased Changie fragments and versioned release notes
@@ -112,12 +113,13 @@ The chart uses `appVersion` as its default image tag; users can override it thro
 3. Review the generated preparation PR into `next`.
    It contains updated versions, changelogs, versioned release notes, and `.changes/release.json`, which records
    the source commit, previous and new versions, and whether the image changed.
+   The workflow creates the commit through GitHub's API and verifies its signature before opening the PR.
    Keep these files consistent if editing the preparation PR.
 4. Approve workflows on the bot-created PR if GitHub requests it, and merge after **Testing result** passes.
 5. Open a PR from `next` into `main`.
    Wait for the full checks and use **Create a merge commit**.
    Squash and rebase merges do not satisfy release validation.
-6. Watch **Releasing** validate the preparation, publish the artifacts, and deploy the Helm repository index through Pages.
+6. Watch **Releasing** validate the preparation, publish the artifacts, and deploy the Helm repository site through Pages.
    Leave `publish_existing` disabled for this process.
 
 Preparation creates no PR when there are no unreleased fragments.
@@ -150,3 +152,8 @@ Docker and Helm authenticate to the Nebius registry using the Nebius CLI credent
 - GitHub chart release: `nfs-server-<version>`,
   with the packaged chart archive attached
 - Helm repository index: `index.yaml` committed to `gh-pages` and deployed through GitHub Pages
+
+The [Helm repository homepage](https://nebius.github.io/nfs-server/) provides installation commands and a link to the index.
+Its source is [docs/index.html](docs/index.html), a static HTML page with no build step.
+Publication copies it to `gh-pages` alongside `index.yaml`, committing changes to either file.
+Homepage edits deploy with the next release; the Pages job serves the exact published snapshot.

@@ -65,7 +65,7 @@ jobs:
         id: paths
         if: github.event_name != 'workflow_dispatch'
         with:
-          base: ${{ github.base_ref || github.ref_name }}
+          base: ${{ github.event_name != 'pull_request' && github.ref_name || '' }}
           # language=yaml
           filters: |
             github:
@@ -138,7 +138,7 @@ jobs:
           (cd "$tool_dir" && sha256sum --check hadolint-Linux-x86_64.sha256)
           sudo install -m 755 "$tool_dir/hadolint-Linux-x86_64" /usr/local/bin/hadolint
 
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         if: needs.changes.outputs.helm == 'true'
         with:
           version: v4.3.0
@@ -197,7 +197,7 @@ jobs:
         with:
           just-version: '1.58.0'
 
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.0
 
