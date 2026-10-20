@@ -1,0 +1,12 @@
+{
+  "source_sha": "269ab5a4407f856be4ce74eb46aa5e6e0ced92e4",
+  "previous": {
+    "image": "1.0.1",
+    "chart": "1.0.1"
+  },
+  "versions": {
+    "image": "1.0.1",
+    "chart": "2.0.0"
+  },
+  "image_changed": false
+}
