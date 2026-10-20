@@ -1,0 +1,227 @@
+name: Testing
+
+on:
+  pull_request:
+    branches: [next, main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testing-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  policy:
+    name: Check branch policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Allow only this repository's next branch to target main
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        # language=bash
+        run: |
+          if [[ "$EVENT" == pull_request && "$BASE" == main ]]; then
+            if [[ "$HEAD" != next || "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+              echo "Only this repository's next branch may target main." >&2
+              exit 1
+            fi
+          fi
+
+  changes:
+    name: Detect changes
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      github: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.github == 'true' }}
+      just: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.just == 'true' }}
+      docker: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.docker == 'true' }}
+      helm: ${{ steps.selection.outputs.all == 'true' || steps.paths.outputs.helm == 'true' }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Configure per-path change tracker
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        id: paths
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          base: ${{ github.base_ref || github.ref_name }}
+          # language=yaml
+          filters: |
+            github:
+              - '.github/actions/**'
+              - '.github/workflows/**'
+            workflow:
+              - '.github/workflows/testing.yaml'
+            just:
+              - '**/*justfile'
+            docker:
+              - 'docker/**'
+            helm:
+              - 'helm/**'
+
+      - name: Select all checks for release promotion or manual testing
+        id: selection
+        env:
+          ALL: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || steps.paths.outputs.workflow == 'true' }}
+        # language=bash
+        run: echo "all=$ALL" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: Lint
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        if: needs.changes.outputs.github == 'true' || needs.changes.outputs.just == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.helm == 'true'
+        with:
+          just-version: '1.58.0'
+
+      - name: Install ShellCheck
+        if: needs.changes.outputs.github == 'true' || needs.changes.outputs.docker == 'true'
+        # language=bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+
+      - name: Install actionlint
+        if: needs.changes.outputs.github == 'true'
+        # language=bash
+        run: |
+          tool_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$tool_dir/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_checksums.txt \
+            --output "$tool_dir/checksums.txt"
+          (cd "$tool_dir" && sha256sum --check --ignore-missing checksums.txt)
+          tar -xzf "$tool_dir/actionlint_1.7.12_linux_amd64.tar.gz" -C "$tool_dir" actionlint
+          sudo install -m 755 "$tool_dir/actionlint" /usr/local/bin/actionlint
+
+      - name: Install Hadolint
+        if: needs.changes.outputs.docker == 'true'
+        # language=bash
+        run: |
+          tool_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location \
+            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 \
+            --output "$tool_dir/hadolint-Linux-x86_64"
+          curl --fail --silent --show-error --location \
+            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64.sha256 \
+            --output "$tool_dir/hadolint-Linux-x86_64.sha256"
+          (cd "$tool_dir" && sha256sum --check hadolint-Linux-x86_64.sha256)
+          sudo install -m 755 "$tool_dir/hadolint-Linux-x86_64" /usr/local/bin/hadolint
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        if: needs.changes.outputs.helm == 'true'
+        with:
+          version: v4.3.0
+
+      - name: Lint GitHub workflows
+        if: needs.changes.outputs.github == 'true'
+        # language=bash
+        run: just github lint
+
+      - name: Lint Justfiles
+        if: needs.changes.outputs.just == 'true'
+        # language=bash
+        run: just just lint
+
+      - name: Lint Docker files
+        if: needs.changes.outputs.docker == 'true'
+        # language=bash
+        run: just docker lint
+
+      - name: Lint Helm chart
+        if: needs.changes.outputs.helm == 'true'
+        # language=bash
+        run: just helm lint
+
+  docker-test:
+    name: Test Dockerfile
+    needs: [changes, lint]
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+
+      - name: Check Dockerfile without building an image
+        # language=bash
+        run: just docker test
+
+  helm-test:
+    name: Test Helm chart
+    needs: [changes, lint]
+    if: needs.changes.outputs.helm == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v4.3.0
+
+      - name: Prepare dependencies and run Helm unit tests
+        # language=bash
+        run: just helm test
+
+  result:
+    name: Testing result
+    needs: [policy, changes, lint, docker-test, helm-test]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful checks, allowing only unselected tests to skip
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        # language=bash
+        run: |
+          jq --exit-status '
+            .policy.result == "success" and
+            .changes.result == "success" and
+            .lint.result == "success" and
+            (.changes.outputs.docker == "false" or .["docker-test"].result == "success") and
+            (.changes.outputs.helm == "false" or .["helm-test"].result == "success") and
+            all(.[]; .result == "success" or .result == "skipped")
+          ' <<< "$RESULTS"

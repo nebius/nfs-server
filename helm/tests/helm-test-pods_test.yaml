@@ -1,0 +1,79 @@
+suite: Helm test pods
+templates:
+  - templates/tests/test-nfs-connectivity.yaml
+  - templates/tests/test-configmap-exports.yaml
+release:
+  name: test-release
+  namespace: test-ns
+tests:
+  - it: renders the NFS connectivity test pod
+    template: templates/tests/test-nfs-connectivity.yaml
+    asserts:
+      - isKind:
+          of: Pod
+      - equal:
+          path: metadata.name
+          value: test-release-nfs-server-test
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: test
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "1"
+      - equal:
+          path: spec.restartPolicy
+          value: Never
+      - equal:
+          path: spec.containers[0].name
+          value: nfs-test
+      - equal:
+          path: spec.containers[0].image
+          value: alpine:3.18
+      - equal:
+          path: spec.containers[0].securityContext.privileged
+          value: true
+      - matchRegex:
+          path: spec.containers[0].command[2]
+          pattern: NFS_SERVER="test-release-nfs-server.test-ns.svc.cluster.local"
+      - matchRegex:
+          path: spec.containers[0].command[2]
+          pattern: nc -z -v \$NFS_SERVER 2049
+      - matchRegex:
+          path: spec.containers[0].command[2]
+          pattern: mount -t nfs4 \$NFS_SERVER:/export /mnt/nfs-test
+
+  - it: renders the ConfigMap exports test pod
+    template: templates/tests/test-configmap-exports.yaml
+    asserts:
+      - isKind:
+          of: Pod
+      - equal:
+          path: metadata.name
+          value: test-release-nfs-server-configmap-test
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: test
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "2"
+      - equal:
+          path: spec.restartPolicy
+          value: Never
+      - equal:
+          path: spec.containers[0].name
+          value: configmap-test
+      - equal:
+          path: spec.containers[0].image
+          value: alpine:3.18
+      - equal:
+          path: spec.containers[0].volumeMounts[0].mountPath
+          value: /etc/exports
+      - equal:
+          path: spec.volumes[0].configMap.name
+          value: test-release-nfs-server-exports
+      - matchRegex:
+          path: spec.containers[0].command[2]
+          pattern: grep -q "/export" /etc/exports
+      - matchRegex:
+          path: spec.containers[0].command[2]
+          pattern: EXPECTED_LINES=3

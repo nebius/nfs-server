@@ -4,6 +4,10 @@
 
 A bundle of Docker image and Helm chart to deploy NFS server in Kubernetes.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for repository structure, development tools, checks, and the release process.
+
 ## License
 
 Copyright 2025 Nebius B.V.

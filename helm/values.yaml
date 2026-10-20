@@ -2,7 +2,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: cr.eu-north1.nebius.cloud/soperator/nfs-server
+  repository: cr.eu-north1.nebius.cloud/soperator/nfsd
   pullPolicy: IfNotPresent
   tag: ""
 

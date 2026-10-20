@@ -9,9 +9,9 @@ keywords:
   - nfs
   - storage
   - filesystem
-home: https://github.com/nebius/soperator
+home: https://github.com/nebius/nfs-server
 sources:
-  - https://github.com/nebius/soperator/tree/main/images/nfs-server
+  - https://github.com/nebius/nfs-server/tree/main/
 maintainers:
   - name: Nebius Team
     email: support@nebius.com
