@@ -65,7 +65,7 @@ jobs:
         id: paths
         if: github.event_name != 'workflow_dispatch'
         with:
-          base: ${{ github.base_ref || github.ref_name }}
+          base: ${{ github.event_name != 'pull_request' && github.ref_name || '' }}
           # language=yaml
           filters: |
             github:
