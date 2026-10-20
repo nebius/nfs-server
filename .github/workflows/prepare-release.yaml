@@ -125,13 +125,42 @@ jobs:
           image=$(jq --raw-output '.versions.image' .changes/release.json)
           source=$(jq --raw-output '.source_sha' .changes/release.json)
           
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch --create "$branch"
+          [[ "$(git rev-parse HEAD)" == "$source" ]]
           git add --all -- .changes helm/Chart.yaml helm/CHANGELOG.md docker/CHANGELOG.md
-          git commit --message "Prepare chart $version and image $image"
-          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-            push origin "HEAD:refs/heads/$branch"
+
+          additions='[]'
+          while IFS= read -r -d '' path; do
+            contents=$(git show ":$path" | base64 | tr -d '\n')
+            additions=$(jq --arg path "$path" --arg contents "$contents" \
+              '. + [{path: $path, contents: $contents}]' <<< "$additions")
+          done < <(git diff --cached --name-only --no-renames --diff-filter=AM -z)
+          deletions=$(git diff --cached --name-only --no-renames --diff-filter=D -z | \
+            jq --raw-input --slurp 'split("\u0000") | map(select(length > 0) | {path: .})')
+
+          # GitHub signs API-authored commits; a local bot identity alone does not sign them.
+          jq --null-input \
+            --arg query 'mutation($input: CreateCommitOnBranchInput!) {
+              createCommitOnBranch(input: $input) { commit { oid } }
+            }' \
+            --arg repository "$GITHUB_REPOSITORY" --arg branch "$branch" --arg source "$source" \
+            --arg headline "Prepare chart $version and image $image" \
+            --argjson additions "$additions" --argjson deletions "$deletions" \
+            '{query: $query, variables: {input: {
+              branch: {repositoryNameWithOwner: $repository, branchName: $branch},
+              expectedHeadOid: $source, message: {headline: $headline},
+              fileChanges: {additions: $additions, deletions: $deletions}
+            }}}' > "$RUNNER_TEMP/prepared-commit.json"
+
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/heads/$branch" -f "sha=$source" --silent
+          commit=$(gh api graphql --input "$RUNNER_TEMP/prepared-commit.json" \
+            --jq '.data.createCommitOnBranch.commit.oid')
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          if ! gh api "repos/$GITHUB_REPOSITORY/commits/$commit" | \
+            jq --exit-status '.commit.verification.verified == true'; then
+            echo 'Preparation commit signature is not verified; refusing to open a PR.' >&2
+            exit 1
+          fi
           
           # Backticks in single-quoted PR instructions are literal Markdown.
           # shellcheck disable=SC2016
