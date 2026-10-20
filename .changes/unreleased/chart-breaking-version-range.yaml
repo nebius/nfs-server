@@ -1,0 +1,4 @@
+project: chart
+kind: Breaking
+body: Establish the standalone chart's 2.x version range to avoid registry version collisions. This version jump introduces no intentional chart configuration incompatibility; the Docker image version is unchanged.
+time: 2026-10-20T12:00:00Z
