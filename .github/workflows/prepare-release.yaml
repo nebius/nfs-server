@@ -1,0 +1,154 @@
+name: Prepare release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release-next
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lookup:
+    name: Find existing preparation PR
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      url: ${{ steps.pr.outputs.url }}
+
+    steps:
+      - name: Preserve any open preparation PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # language=bash
+        run: |
+          url=$(gh pr list --repo "$GITHUB_REPOSITORY" --base next --state open \
+            --limit 1000 --json headRefName,url \
+            --jq '[.[] | select(.headRefName | startswith("release/prepare-"))][0].url // ""')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          if [[ -n "$url" ]]; then
+            echo "Existing preparation PR kept unchanged: $url" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  prepare:
+    name: Prepare release PR into next
+    needs: lookup
+    if: needs.lookup.outputs.url == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: next
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned YAML tool
+        # language=bash
+        run: |
+          tool_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location \
+            https://github.com/mikefarah/yq/releases/download/v4.48.2/yq_linux_amd64 \
+            --output "$tool_dir/yq"
+          echo "0ffc35320180d4911bc3a772934da508715e08af444cb33d4d43660065e25bcc  $tool_dir/yq" | sha256sum --check
+          sudo install -m 755 "$tool_dir/yq" /usr/local/bin/yq
+
+      - name: Install Changie
+        # language=bash
+        run: |
+          tool_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location \
+            https://github.com/miniscruff/changie/releases/download/v1.26.0/changie_1.26.0_linux_amd64.tar.gz \
+            --output "$tool_dir/changie_1.26.0_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/miniscruff/changie/releases/download/v1.26.0/checksums.txt \
+            --output "$tool_dir/checksums.txt"
+          (cd "$tool_dir" && sha256sum --check --ignore-missing checksums.txt)
+          tar -xzf "$tool_dir/changie_1.26.0_linux_amd64.tar.gz" -C "$tool_dir" changie
+          sudo install -m 755 "$tool_dir/changie" /usr/local/bin/changie
+
+      - name: Generate prepared release files
+        id: changes
+        # language=bash
+        run: |
+          previous=$(yq -o=json '{"image": .appVersion, "chart": .version}' helm/Chart.yaml)
+          source=$(git rev-parse HEAD)
+          shopt -s nullglob
+          image_changes=(.changes/unreleased/image-*.yaml)
+          chart_changes=(.changes/unreleased/chart-*.yaml)
+          if (( ${#image_changes[@]} == 0 && ${#chart_changes[@]} == 0 )); then
+            echo 'prepared=false' >> "$GITHUB_OUTPUT"
+            echo 'No releasable changes; no PR created.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          image_changed=false
+          if (( ${#image_changes[@]} > 0 )); then
+            image_changed=true
+            changie batch auto -j image --allow-no-changes=false
+            image=$(yq '.appVersion' helm/Chart.yaml)
+            changie new -j chart -k Changed -b "Update NFS server image to $image." --interactive=false
+          fi
+          changie batch auto -j chart --allow-no-changes=false
+          changie merge
+          versions=$(yq -o=json '{"image": .appVersion, "chart": .version}' helm/Chart.yaml)
+          jq --null-input --arg source "$source" --argjson previous "$previous" \
+            --argjson versions "$versions" --argjson changed "$image_changed" \
+            '{source_sha: $source, previous: $previous, versions: $versions, image_changed: $changed}' \
+            > .changes/release.json
+          echo 'prepared=true' >> "$GITHUB_OUTPUT"
+
+      - name: Commit prepared files and open an editable PR
+        if: steps.changes.outputs.prepared == 'true'
+        # language=bash
+        run: |
+          branch="release/prepare-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          version=$(jq --raw-output '.versions.chart' .changes/release.json)
+          image=$(jq --raw-output '.versions.image' .changes/release.json)
+          source=$(jq --raw-output '.source_sha' .changes/release.json)
+          
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch --create "$branch"
+          git add --all -- .changes helm/Chart.yaml helm/CHANGELOG.md docker/CHANGELOG.md
+          git commit --message "Prepare chart $version and image $image"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+            push origin "HEAD:refs/heads/$branch"
+          
+          # Backticks in single-quoted PR instructions are literal Markdown.
+          # shellcheck disable=SC2016
+          body=$(printf '%s\n' \
+            "Prepare chart **$version** and image **$image** from next commit \`$source\`." \
+            '' \
+            "Check out this branch with: \`gh pr checkout $branch\`." \
+            '' \
+            'Manual edits are welcome. Keep Chart.yaml, the release manifest, release-note filenames, and changelogs consistent.' \
+            'If next gains image-source changes, regenerate preparation from updated next before promotion; preserve manual edits deliberately.' \
+            '' \
+            'Approve workflows to run on this bot-created PR, then require the Testing result check before merging into next.' \
+            'Afterward, promote next to main using a merge commit; publication runs only after that promotion.' \
+            '' \
+            'Local validation: `just github lint`, `just just lint`, `just helm lint`, `just helm test`. Building and publishing run only in CI.')
+          
+          url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base next --head "$branch" \
+            --title "Prepare release: chart $version" --body "$body")
+          
+          echo "Preparation PR: $url" >> "$GITHUB_STEP_SUMMARY"

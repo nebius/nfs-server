@@ -25,3 +25,5 @@
 OWNERS
 # Agent file
 AGENT.md
+# Just file
+justfile
