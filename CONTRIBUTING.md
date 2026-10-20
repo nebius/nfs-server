@@ -113,6 +113,7 @@ The chart uses `appVersion` as its default image tag; users can override it thro
 3. Review the generated preparation PR into `next`.
    It contains updated versions, changelogs, versioned release notes, and `.changes/release.json`, which records
    the source commit, previous and new versions, and whether the image changed.
+   The workflow creates the commit through GitHub's API and verifies its signature before opening the PR.
    Keep these files consistent if editing the preparation PR.
 4. Approve workflows on the bot-created PR if GitHub requests it, and merge after **Testing result** passes.
 5. Open a PR from `next` into `main`.
